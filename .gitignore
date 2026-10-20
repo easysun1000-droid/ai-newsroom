@@ -1,8 +1,8 @@
 # 민감 정보
 .env
-.env.*
 .env.local
 .env.production
+!.env.example
 api_keys.json
 secrets.json
 *.key
@@ -29,6 +29,34 @@ Desktop.ini
 dist/
 build/
 node_modules/
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+
+# 뉴스 백업 및 테스트 데이터
+data/*.bak
+data/news.json.bak*
+data/summary_test.json
+data/review_candidates.json
+data/rss_test.json
+data/news_dummy.json
+data/news_before_update.json
+
+# 일회성 테스트 스크립트
+test_*.py
+check_*.py
+update_*.py
+replace_*.py
+extract_*.py
+find_*.py
+print_*.py
+create_*.py
+summarize_three.py
+retry_*.py
+list_*.py
+get_desc.py
 
 # 프로젝트 비포함
 # 필요시 추가
