@@ -7,6 +7,7 @@ api_keys.json
 secrets.json
 *.key
 *.pem
+js/supabase-config.js
 
 # 운영체제
 Thumbs.db
@@ -57,6 +58,15 @@ summarize_three.py
 retry_*.py
 list_*.py
 get_desc.py
+
+# 관리자 검수 데이터 외부 노출 방지
+data/admin_reviews_level/
+data/admin_reviews_level/*
+
+# 백업 및 감사 기록
+data/*.bak
+data/*.bak*
+reports/*.html
 
 # 프로젝트 비포함
 # 필요시 추가

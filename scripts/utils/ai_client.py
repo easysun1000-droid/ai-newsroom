@@ -16,7 +16,7 @@ class NvidiaAIClient:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
-    def chat_completion(self, system_prompt, user_prompt, temperature=0.3, max_tokens=2048):
+    def chat_completion(self, system_prompt, user_prompt, temperature=0.3, max_tokens=2048, reasoning_effort='low', stream=False):
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -25,7 +25,9 @@ class NvidiaAIClient:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
+                stream=stream
             )
             content = response.choices[0].message.content
             return content if content else ""

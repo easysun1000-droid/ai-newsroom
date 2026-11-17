@@ -40,6 +40,26 @@ def is_ai_related_text(text):
             reasons.append(k)
     return len(reasons) > 0, reasons
 
+def detect_access_type(url, title, summary):
+    # 유료 구독 신호 키워드
+    paywall_keywords = [
+        'subscriber only', 'subscription required', 'paywall',
+        '유료 구독', '구독자만', '유료 기사', '회원 전용'
+    ]
+    text = f"{title} {summary}".lower()
+    for kw in paywall_keywords:
+        if kw in text:
+            return 'paid'
+    # 무료 확인 신호
+    free_keywords = [
+        'free to read', 'free article', '무료로 읽을 수'
+    ]
+    for kw in free_keywords:
+        if kw in text:
+            return 'free'
+    # 판별 불확실
+    return 'unknown'
+
 def is_ai_related_entry(entry):
     title = entry.get('title', '') or ''
     summary = entry.get('summary', '') or entry.get('description', '') or ''
@@ -114,6 +134,7 @@ def collect(limit=10, dry_run=False, output_path=None):
                     continue
                 categories = classify_categories(title, summary)
                 korean = is_korean(title)
+                access_type = detect_access_type(link, title, summary)
                 item = {
                     'id': 'rss-' + hashlib.sha1(link.encode()).hexdigest()[:10],
                     'title': title,
@@ -122,6 +143,7 @@ def collect(limit=10, dry_run=False, output_path=None):
                     'url': link,
                     'category': categories,
                     'collected_at': datetime.now(timezone.utc).isoformat(),
+                    'access_type': access_type,
                     '_korean': korean,
                     '_pub_dt': pub_dt,
                     '_reasons_count': len(reasons),

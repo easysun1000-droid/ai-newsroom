@@ -1,18 +1,113 @@
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
+
 const grid = document.getElementById('newsGrid');
 const loadMoreWrap = document.getElementById('loadMoreWrap');
 const loadMoreBtn = document.getElementById('loadMoreBtn');
 const categorySelect = document.getElementById('categorySelect');
 const searchInput = document.getElementById('searchInput');
 
+const params = new URLSearchParams(window.location.search);
+const useSupabase = params.get('source') === 'supabase';
+const usePreview = params.get('source') === 'preview';
+const useConcise = params.get('source') === 'concise';
+
 let allNews = [];
 let summaryMap = new Map();
+let levelExpMap = new Map();
 let currentLevel = 'all';
-let currentRange = '7d';
+let currentRange = 'all';
 let currentCategory = 'all';
 let searchQuery = '';
-let visibleCount = 9;
+let currentPage = 1;
+const pageSize = 9;
+let ttsState = { utter:null, playing:false, currentCard:null };
 
 async function loadData(){
+  try{
+    const leRes = await fetch('./data/level_explanations.json');
+    if(leRes.ok){
+      const leData = await leRes.json();
+      const items = leData.items || {};
+      levelExpMap = new Map(Object.entries(items));
+    }
+  }catch(e){ console.warn('level_explanations.json load failed', e); }
+  if(useSupabase){
+    try{
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/public_news_view?select=*`, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      });
+      if(!res.ok) throw new Error('Supabase fetch failed');
+      const data = await res.json();
+      allNews = data.map(item => ({
+        id: item.external_id,
+        external_id: item.external_id,
+        url: item.url,
+        title: item.title_en || item.title_display || '',
+        title_ko: item.title_display || item.title_ko || '',
+        summary: Array.isArray(item.summary_en) ? item.summary_en : [],
+        summary_ko: Array.isArray(item.summary_ko) ? item.summary_ko : [],
+        source: item.source,
+        date: item.published_at,
+        collected_at: item.collected_at || null,
+        is_sample: false,
+        is_real: true,
+        categories: item.categories || [],
+        levels: item.levels || [],
+        keywords: item.keywords || [],
+        whyImportant: item.whyimportant || '',
+        concepts: item.concepts || [],
+        summary_status: item.summary_status || 'generated',
+        summary_locked: false
+      }));
+      summaryMap = new Map();
+      populateCategories();
+      render();
+    }catch(e){
+      console.error('Supabase 로드 실패', e);
+      grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:#b91c1c">Supabase 연결 실패: ${escapeHtml(e.message)}. JSON 백업으로 자동 전환합니다.</p>`;
+      if(loadMoreWrap) loadMoreWrap.style.display='none';
+    }
+    return;
+  }
+  if(useConcise){
+    try{
+      const res = await fetch('./data/news_preview_concise.json');
+      if(!res.ok) throw new Error('concise fetch failed');
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      allNews = items.filter(it => it.summary_status === 'reviewed' && Array.isArray(it.summary_ko) && it.summary_ko.length === 3);
+      summaryMap = new Map();
+      populateCategories();
+      render();
+    }catch(e){
+      console.warn('news_preview_concise.json 로드 실패', e);
+      grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:#b91c1c">간결 요약 미리보기 로드 실패: ${escapeHtml(e.message)}</p>`;
+      if(loadMoreWrap) loadMoreWrap.style.display='none';
+      return;
+    }
+    return;
+  }
+  if(usePreview){
+    try{
+      const res = await fetch('./data/news_preview_with_summaries.json');
+      if(!res.ok) throw new Error('preview fetch failed');
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      allNews = items;
+      summaryMap = new Map();
+      populateCategories();
+      render();
+    }catch(e){
+      console.warn('news_preview_integrated.json 로드 실패', e);
+      grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:#b91c1c">미리보기 데이터 로드 실패: ${escapeHtml(e.message)}</p>`;
+      if(loadMoreWrap) loadMoreWrap.style.display='none';
+      return;
+    }
+    return;
+  }
   try{
     const newsRes = await fetch('./data/news.json');
     if(!newsRes.ok) throw new Error('fetch failed');
@@ -39,7 +134,7 @@ function populateCategories(){
 }
 
 function parseDate(d){ if(!d) return null; try{ return new Date(d); }catch{ return null; } }
-function isKorean(str){ return /[가-힣]/.test(str||''); }
+function isKorean(str){ return /[\uAC00-\uD7A3]/.test(str||''); }
 
 function filterNews(){
   const now = new Date();
@@ -48,10 +143,12 @@ function filterNews(){
   else if(currentRange==='7d'){ start = new Date(now.getTime() - 7*24*60*60*1000); }
   else if(currentRange==='30d'){ start = new Date(now.getTime() - 30*24*60*60*1000); }
   let data = allNews.filter(n=>{
+    const access_type = n.access_type;
+    if(access_type && access_type !== 'free') return false;
     if(currentCategory!=='all'){ const cats = n.categories||[]; if(!cats.includes(currentCategory)) return false; }
     if(searchQuery){ const q = searchQuery.toLowerCase(); const hayParts = [n.title, n.title_ko, n.source, ...(n.categories||[]), ...(Array.isArray(n.summary_ko)?n.summary_ko:[]), ...(Array.isArray(n.keywords)?n.keywords:[])].filter(Boolean); const hay = hayParts.join(' ').toLowerCase(); if(!hay.includes(q)) return false; }
     if(start){ const d = parseDate(n.date); if(!d) return false; if(d < start) return false; }
-    if(currentLevel!=='all'){ const levels = n.levels||[]; if(levels.length>0 && !levels.includes(currentLevel)){ if(!n.is_sample) return true; return false; } }
+    if(currentLevel!=='all'){ const entry = levelExpMap.get(n.id); const lvl = entry && entry.levels ? entry.levels[currentLevel] : null; if(!lvl || lvl.status !== 'reviewed'){ return false; } }
     return true;
   });
   data.sort((a,b)=>{
@@ -73,7 +170,6 @@ function filterNews(){
 function render(){
   const data = filterNews();
   const total = data.length;
-  visibleCount = 9;
   grid.innerHTML = '';
   if(total===0){
     const hint = currentRange && currentRange!=='all' ? '기간을 <strong>전체</strong>로 확장해 보세요.' : '필터를 완화해 보세요.';
@@ -81,7 +177,12 @@ function render(){
     if(loadMoreWrap) loadMoreWrap.style.display='none';
     return;
   }
-  const toShow = data.slice(0, visibleCount);
+  const totalPages = Math.ceil(total / pageSize);
+  if(currentPage > totalPages) currentPage = totalPages;
+  if(currentPage < 1) currentPage = 1;
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = startIdx + pageSize;
+  const toShow = data.slice(startIdx, endIdx);
   toShow.forEach(n=>{
     const card = document.createElement('article');
     card.className = 'card';
@@ -90,7 +191,7 @@ function render(){
     header.className = 'card-header';
     const badgeSpan = document.createElement('span');
     badgeSpan.className = n.is_sample ? 'badge sample' : 'badge real';
-    badgeSpan.textContent = n.is_sample ? '예시' : '실제';
+    badgeSpan.textContent = n.is_sample ? '샘플' : '실제';
     header.appendChild(badgeSpan);
     card.appendChild(header);
 
@@ -99,11 +200,23 @@ function render(){
     const isReviewed = n.summary_status === 'reviewed';
     const titleToShow = isReviewed && n.title_ko ? n.title_ko : n.title;
     titleEl.textContent = titleToShow || '';
+    titleEl.title = titleToShow || '';
     card.appendChild(titleEl);
 
     const metaDate = document.createElement('div');
     metaDate.className = 'meta';
-    const dateStr = n.date ? String(n.date).replace('T',' ').replace('+00:00','') : '';
+    function formatKoreanDate(ds){
+      if(!ds) return '';
+      try{
+        const d = new Date(ds);
+        if(isNaN(d)) return String(ds).slice(0,10).replace(/-/g,'.');
+        const y = d.getFullYear();
+        const m = String(d.getMonth()+1).padStart(2,'0');
+        const day = String(d.getDate()).padStart(2,'0');
+        return `${y}.${m}.${day}`;
+      }catch(e){ return String(ds).slice(0,10).replace(/-/g,'.'); }
+    }
+    const dateStr = formatKoreanDate(n.date);
     metaDate.textContent = `${dateStr} · ${n.source || ''}`;
     card.appendChild(metaDate);
 
@@ -118,11 +231,14 @@ function render(){
     if(isReviewed){
       const summaryKO = n.summary_ko;
       if(Array.isArray(summaryKO) && summaryKO.length){
+        const ol = document.createElement('ol');
+        ol.className = 'summary-list';
         summaryKO.forEach(line=>{
-          const p = document.createElement('div');
-          p.textContent = line || '';
-          summaryDiv.appendChild(p);
+          const li = document.createElement('li');
+          li.textContent = line || '';
+          ol.appendChild(li);
         });
+        summaryDiv.appendChild(ol);
       }else if(typeof summaryKO === 'string' && summaryKO){
         summaryDiv.textContent = summaryKO;
       }
@@ -136,9 +252,84 @@ function render(){
       card.appendChild(summaryDiv);
     }
 
+    // Level status note for senior/special
+    if(currentLevel !== 'all' && ['senior','special'].includes(currentLevel)){
+      const entry = levelExpMap.get(n.id);
+      const lvlEntry = entry && entry.levels ? entry.levels[currentLevel] : null;
+      if(!lvlEntry || lvlEntry.status !== 'reviewed'){
+        const note = document.createElement('div');
+        note.className = 'explain-note';
+        note.textContent = '해당 수준 설명이 준비 중입니다.';
+        card.appendChild(note);
+      }
+    }
+
+    // Keywords tags
+    const kw = Array.isArray(n.keywords) ? n.keywords.slice(0,3) : [];
+    if(kw.length){
+      const tagWrap = document.createElement('div');
+      tagWrap.className = 'tags';
+      kw.forEach(k => {
+        const sp = document.createElement('span');
+        sp.className = 'tag';
+        sp.textContent = k;
+        tagWrap.appendChild(sp);
+      });
+      card.appendChild(tagWrap);
+    }
+
+    // Level explanation toggle
+    const expToggle = document.createElement('button');
+    expToggle.className = 'explain-toggle';
+    expToggle.textContent = '수준별 설명 보기';
+    expToggle.type = 'button';
+    expToggle.setAttribute('aria-expanded','false');
+    expToggle.setAttribute('aria-controls','expWrap');
+    card.appendChild(expToggle);
+
+    const expWrap = document.createElement('div');
+    expWrap.className = 'level-explanation-wrap';
+    expWrap.style.display = 'none';
+    card.appendChild(expWrap);
+    const levelButtons = document.createElement('div');
+    levelButtons.className = 'level-buttons';
+    const levels = ['elementary','middle','high','adult','senior','special'];
+    const levelLabels = {elementary:'초등',middle:'중등',high:'고등',adult:'성인',senior:'시니어',special:'특수교육'};
+    levels.forEach(lv => {
+      const b = document.createElement('button');
+      b.className = 'level-chip';
+      b.type = 'button';
+      b.dataset.level = lv;
+      b.textContent = levelLabels[lv];
+      levelButtons.appendChild(b);
+    });
+    expWrap.appendChild(levelButtons);
+    const expContent = document.createElement('div');
+    expContent.className = 'level-explanation-content';
+    expWrap.appendChild(expContent);
+    expToggle.addEventListener('click', ()=>{
+      const show = expWrap.style.display === 'none';
+      expWrap.style.display = show ? 'block' : 'none';
+      expToggle.textContent = show ? '수준별 설명 숨기기' : '수준별 설명 보기';
+    });
+    levelButtons.addEventListener('click', (e)=>{
+      const btn = e.target.closest('button.level-chip');
+      if(!btn) return;
+      const lv = btn.dataset.level;
+      const entry = levelExpMap.get(n.id);
+      const lvlData = entry && entry.levels ? entry.levels[lv] : null;
+      if(lvlData && lvlData.status === 'reviewed'){
+        const summary = lvlData.summary || '';
+        const explanation = lvlData.explanation || '';
+        expContent.innerHTML = `<strong>${levelLabels[lv]} 설명</strong><p>${escapeHtml(summary)}</p><p>${escapeHtml(explanation)}</p>`;
+      }else{
+        expContent.innerHTML = `<strong>${levelLabels[lv]} 설명</strong><p style="color:#64748b">해당 수준 설명이 준비 중입니다.</p>`;
+      }
+    });
+
     if(n.url){
       const originLink = document.createElement('div');
-      originLink.className = 'meta';
+      originLink.className = 'origin-link';
       const a = document.createElement('a');
       a.href = n.url;
       a.target = '_blank';
@@ -150,16 +341,84 @@ function render(){
 
     grid.appendChild(card);
   });
-  if(loadMoreWrap){ if(total > visibleCount){ loadMoreWrap.style.display='block'; } else { loadMoreWrap.style.display='none'; } }
+  if(loadMoreWrap){
+    if(total > 0 && totalPages > 1){
+      loadMoreWrap.style.display = 'block';
+      loadMoreWrap.innerHTML = '';
+      let paginationHTML = '<div style="text-align:center;margin-top:20px;">';
+      paginationHTML += `<button ${currentPage === 1 ? 'disabled' : ''} style="margin:0 4px;">이전</button>`;
+      for(let i=1; i<= totalPages; i++){
+        const active = i === currentPage ? 'style="background-color:#3b82f6;color:#fff;margin:0 4px;"' : 'style="margin:0 4px;"';
+        paginationHTML += `<button ${active}>${i}</button>`;
+      }
+      paginationHTML += `<button ${currentPage === totalPages ? 'disabled' : ''} style="margin:0 4px;">다음</button>`;
+      paginationHTML += '</div>';
+      loadMoreWrap.innerHTML = paginationHTML;
+      // attach events
+      const btns = loadMoreWrap.querySelectorAll('button');
+      let idx = 0;
+      // first button is prev
+      btns[idx++].addEventListener('click', ()=>{ if(currentPage > 1){ currentPage--; render(); }});
+      for(let i=1; i<= totalPages; i++){
+        btns[idx++].addEventListener('click', ()=>{ currentPage = i; render(); });
+      }
+      btns[idx].addEventListener('click', ()=>{ if(currentPage < totalPages){ currentPage++; render(); }});
+    } else {
+      loadMoreWrap.style.display = 'none';
+    }
+  }
 }
 
 
+function getKoreanVoice(){ if(!('speechSynthesis' in window)) return null; const v=speechSynthesis.getVoices(); const ko=v.filter(x=>x.lang.toLowerCase().startsWith('ko')); return ko[0]||v[0]||null; }
+function ttsShowStatus(msg){ const el=document.getElementById('ttsStatus'); if(!el) return; el.textContent=msg; el.style.display='block'; setTimeout(()=>{el.style.display='none';},3000); }
+function ttsStop(){ if('speechSynthesis' in window) speechSynthesis.cancel(); ttsState.playing=false; ttsState.utter=null; ttsState.currentCard=null; }
+function ttsSpeak(text,cardId){ if(!('speechSynthesis' in window)){ttsShowStatus('TTS 지원 안됨');return;} if(!text||!text.trim()){ttsShowStatus('읽을 내용 없음');return;} ttsStop(); const utter=new SpeechSynthesisUtterance(text); utter.lang='ko-KR'; const voice=getKoreanVoice(); if(voice) utter.voice=voice; utter.onend=()=>{ttsState.playing=false;ttsShowStatus('읽기 완료');}; utter.onerror=()=>{ttsState.playing=false;ttsShowStatus('읽기 오류');}; speechSynthesis.speak(utter); ttsState.utter=utter; ttsState.playing=true; ttsState.currentCard=cardId; ttsShowStatus('읽기 시작'); }
+
 function escapeHtml(str){ return String(str).replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
 
-document.querySelectorAll('.level-btn').forEach(btn=>{ btn.addEventListener('click', ()=>{ document.querySelectorAll('.level-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); currentLevel = btn.dataset.level; visibleCount = 9; render(); }); });
-document.querySelectorAll('.date-btn').forEach(btn=>{ btn.addEventListener('click', ()=>{ document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); currentRange = btn.dataset.range; visibleCount = 9; render(); }); });
-if(categorySelect){ categorySelect.addEventListener('change', ()=>{ currentCategory = categorySelect.value; visibleCount = 9; render(); }); }
-if(searchInput){ searchInput.addEventListener('input', ()=>{ searchQuery = searchInput.value.trim(); visibleCount = 9; render(); }); }
-if(loadMoreBtn){ loadMoreBtn.addEventListener('click', ()=>{ visibleCount += 9; render(); }); }
+document.querySelectorAll('.level-btn').forEach(btn=>{ btn.addEventListener('click', ()=>{ document.querySelectorAll('.level-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); currentLevel = btn.dataset.level; currentPage = 1; render(); }); });
+document.querySelectorAll('.date-btn').forEach(btn=>{ btn.addEventListener('click', ()=>{ document.querySelectorAll('.date-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); currentRange = btn.dataset.range; currentPage = 1; render(); }); });
+if(categorySelect){ categorySelect.addEventListener('change', ()=>{ currentCategory = categorySelect.value; currentPage = 1; render(); }); }
+if(searchInput){ searchInput.addEventListener('input', ()=>{ searchQuery = searchInput.value.trim(); currentPage = 1; render(); }); }
+// loadMoreBtn removed for pagination
 
+
+function initA11y(){
+  const savedFont = localStorage.getItem('a11y_font') || '100';
+  document.documentElement.setAttribute('data-font-size', savedFont);
+  document.querySelectorAll('[data-font]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const v=b.dataset.font;
+      document.documentElement.setAttribute('data-font-size', v);
+      localStorage.setItem('a11y_font', v);
+    });
+  });
+  const savedContrast = localStorage.getItem('a11y_contrast') === '1';
+  document.documentElement.setAttribute('data-high-contrast', savedContrast ? 'true' : 'false');
+  const ct = document.getElementById('contrastToggle');
+  if(ct){
+    ct.setAttribute('aria-pressed', savedContrast ? 'true' : 'false');
+    ct.addEventListener('click', ()=>{
+      const on = document.documentElement.getAttribute('data-high-contrast') === 'true';
+      const next = !on;
+      document.documentElement.setAttribute('data-high-contrast', next ? 'true' : 'false');
+      localStorage.setItem('a11y_contrast', next ? '1' : '0');
+      ct.setAttribute('aria-pressed', next ? 'true' : 'false');
+    });
+  }
+  // basic ARIA for level explanation toggle
+  document.addEventListener('click', (e)=>{
+    const toggle = e.target.closest('.explain-toggle');
+    if(toggle){
+      const wrap = toggle.parentElement.querySelector('.level-explanation-wrap');
+      if(wrap){
+        const show = wrap.style.display === 'none';
+        wrap.style.display = show ? 'block' : 'none';
+        toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+      }
+    }
+  });
+}
+initA11y();
 loadData();

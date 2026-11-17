@@ -56,10 +56,13 @@ def main():
     news = load_news()
     feeds = load_feeds()
 
-    # 요약 대상 선정: summary_ko가 없는 실제 뉴스
+    # 요약 대상 선정: summary_ko가 없는 실제 뉴스 중 free 접근성 기사
     targets = []
     for item in news:
         if item.get('is_real') and not item.get('title_ko'):
+            access_type = item.get('access_type', 'unknown')
+            if access_type != 'free':
+                continue
             targets.append(item)
         if len(targets) >= args.limit:
             break

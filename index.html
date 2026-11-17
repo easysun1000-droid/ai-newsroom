@@ -12,6 +12,17 @@
     <h1 class="logo">AI 수업 뉴스룸</h1>
     <p class="subtitle">초등부터 성인까지 수준에 맞게 쉽게 보는 AI 뉴스</p>
   </div>
+  <div class="accessibility-bar container">
+    <div class="a11y-group">
+      <span class="a11y-label">글자 크기</span>
+      <div class="btn-group">
+        <button data-font="100" class="a11y-btn">100%</button>
+        <button data-font="125" class="a11y-btn">125%</button>
+        <button data-font="150" class="a11y-btn">150%</button>
+      </div>
+    </div>
+    <button id="contrastToggle" class="a11y-btn" aria-pressed="false">고대비</button>
+  </div>
 </header>
 
 <main class="container">
@@ -24,15 +35,17 @@
         <button data-level="middle" class="level-btn">중등</button>
         <button data-level="high" class="level-btn">고등</button>
         <button data-level="adult" class="level-btn">성인</button>
+        <button data-level="senior" class="level-btn">시니어</button>
+        <button data-level="special" class="level-btn">특수교육</button>
       </div>
     </div>
     <div class="filter-group">
       <span class="filter-label">기간</span>
       <div class="date-selector">
         <button data-range="today" class="date-btn">오늘</button>
-        <button data-range="7d" class="date-btn active">최근7일</button>
+        <button data-range="7d" class="date-btn">최근7일</button>
         <button data-range="30d" class="date-btn">최근30일</button>
-        <button data-range="all" class="date-btn">전체</button>
+        <button data-range="all" class="date-btn active">전체</button>
       </div>
     </div>
     <div class="filter-group">
@@ -55,6 +68,10 @@
   </div>
 
   <p class="sample-note">* 실제 뉴스와 예시 뉴스가 필터로 구분됩니다.</p>
+  <div id="ttsStatus" class="tts-status" aria-live="polite"></div>
+  <footer class="footer-note">
+    <p>본 뉴스룸은 학교·복지관 수업에서 AI 기술과 디지털 리터러시를 학습하기 위한 교육 자료입니다. 뉴스의 권리는 각 권리자에게 있으며, 기사 원문은 제공된 언론사 링크에서 확인할 수 있습니다. 저작권자의 허락 또는 법률상 이용 근거가 없는 자료를 무단 복제·재배포하지 마세요.</p>
+  </footer>
 </main>
 
 <script type="module" src="js/app.js"></script>
