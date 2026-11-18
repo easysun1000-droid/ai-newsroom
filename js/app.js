@@ -1,5 +1,3 @@
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
-
 const grid = document.getElementById('newsGrid');
 const loadMoreWrap = document.getElementById('loadMoreWrap');
 const loadMoreBtn = document.getElementById('loadMoreBtn');
@@ -21,6 +19,36 @@ let searchQuery = '';
 let currentPage = 1;
 const pageSize = 9;
 let ttsState = { utter:null, playing:false, currentCard:null };
+const levelLabels = {elementary:'초등', middle:'중등', high:'고등', adult:'성인', senior:'시니어', special:'특수교육'};
+function renderExplanation(n, expContent, selectedLevel){
+  if(selectedLevel === 'all'){
+    if(n.summary_status === 'reviewed'){
+      const summaryKO = n.summary_ko;
+      if(Array.isArray(summaryKO) && summaryKO.length){
+        let html = '<strong>기본 한국어 요약</strong><ol>';
+        summaryKO.forEach(line=>{ html += `<li>${escapeHtml(line||'')}</li>`; });
+        html += '</ol>';
+        expContent.innerHTML = html;
+        return;
+      } else if(typeof summaryKO === 'string' && summaryKO){
+        expContent.innerHTML = `<strong>기본 한국어 요약</strong><p>${escapeHtml(summaryKO)}</p>`;
+        return;
+      }
+    }
+    expContent.innerHTML = `<strong>기본 한국어 요약</strong><p style="color:#64748b">기본 한국어 요약이 준비 중입니다.</p>`;
+    return;
+  }
+  const entry = levelExpMap.get(n.id);
+  const lvlData = entry && entry.levels ? entry.levels[selectedLevel] : null;
+  const label = levelLabels[selectedLevel] || selectedLevel;
+  if(lvlData && lvlData.status === 'reviewed'){
+    const summary = lvlData.summary || '';
+    const explanation = lvlData.explanation || '';
+    expContent.innerHTML = `<strong>${label} 설명</strong><p>${escapeHtml(summary)}</p><p>${escapeHtml(explanation)}</p>`;
+  } else {
+    expContent.innerHTML = `<strong>${label} 설명</strong><p style="color:#64748b">해당 학습대상 설명은 준비 중입니다.</p>`;
+  }
+}
 
 async function loadData(){
   try{
@@ -33,6 +61,12 @@ async function loadData(){
   }catch(e){ console.warn('level_explanations.json load failed', e); }
   if(useSupabase){
     try{
+      const cfg = await import('./supabase-config.js');
+      const SUPABASE_URL = cfg.SUPABASE_URL;
+      const SUPABASE_ANON_KEY = cfg.SUPABASE_ANON_KEY;
+      if(!SUPABASE_URL || !SUPABASE_ANON_KEY){
+        throw new Error('Supabase 설정이 없습니다. js/supabase-config.js를 생성하고 값을 입력하세요.');
+      }
       const res = await fetch(`${SUPABASE_URL}/rest/v1/public_news_view?select=*`, {
         headers: {
           'apikey': SUPABASE_ANON_KEY,
@@ -67,7 +101,7 @@ async function loadData(){
       render();
     }catch(e){
       console.error('Supabase 로드 실패', e);
-      grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:#b91c1c">Supabase 연결 실패: ${escapeHtml(e.message)}. JSON 백업으로 자동 전환합니다.</p>`;
+      grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:#b91c1c">Supabase 모드: ${escapeHtml(e.message)}. 기본 JSON 모드로 전환하려면 URL 파라미터를 제거하세요.</p>`;
       if(loadMoreWrap) loadMoreWrap.style.display='none';
     }
     return;
@@ -148,7 +182,6 @@ function filterNews(){
     if(currentCategory!=='all'){ const cats = n.categories||[]; if(!cats.includes(currentCategory)) return false; }
     if(searchQuery){ const q = searchQuery.toLowerCase(); const hayParts = [n.title, n.title_ko, n.source, ...(n.categories||[]), ...(Array.isArray(n.summary_ko)?n.summary_ko:[]), ...(Array.isArray(n.keywords)?n.keywords:[])].filter(Boolean); const hay = hayParts.join(' ').toLowerCase(); if(!hay.includes(q)) return false; }
     if(start){ const d = parseDate(n.date); if(!d) return false; if(d < start) return false; }
-    if(currentLevel!=='all'){ const entry = levelExpMap.get(n.id); const lvl = entry && entry.levels ? entry.levels[currentLevel] : null; if(!lvl || lvl.status !== 'reviewed'){ return false; } }
     return true;
   });
   data.sort((a,b)=>{
@@ -284,26 +317,14 @@ function render(){
     expToggle.textContent = '수준별 설명 보기';
     expToggle.type = 'button';
     expToggle.setAttribute('aria-expanded','false');
-    expToggle.setAttribute('aria-controls','expWrap');
     card.appendChild(expToggle);
 
     const expWrap = document.createElement('div');
     expWrap.className = 'level-explanation-wrap';
+    expWrap.id = 'expWrap-' + n.id;
     expWrap.style.display = 'none';
     card.appendChild(expWrap);
-    const levelButtons = document.createElement('div');
-    levelButtons.className = 'level-buttons';
-    const levels = ['elementary','middle','high','adult','senior','special'];
-    const levelLabels = {elementary:'초등',middle:'중등',high:'고등',adult:'성인',senior:'시니어',special:'특수교육'};
-    levels.forEach(lv => {
-      const b = document.createElement('button');
-      b.className = 'level-chip';
-      b.type = 'button';
-      b.dataset.level = lv;
-      b.textContent = levelLabels[lv];
-      levelButtons.appendChild(b);
-    });
-    expWrap.appendChild(levelButtons);
+    expToggle.setAttribute('aria-controls', expWrap.id);
     const expContent = document.createElement('div');
     expContent.className = 'level-explanation-content';
     expWrap.appendChild(expContent);
@@ -311,19 +332,9 @@ function render(){
       const show = expWrap.style.display === 'none';
       expWrap.style.display = show ? 'block' : 'none';
       expToggle.textContent = show ? '수준별 설명 숨기기' : '수준별 설명 보기';
-    });
-    levelButtons.addEventListener('click', (e)=>{
-      const btn = e.target.closest('button.level-chip');
-      if(!btn) return;
-      const lv = btn.dataset.level;
-      const entry = levelExpMap.get(n.id);
-      const lvlData = entry && entry.levels ? entry.levels[lv] : null;
-      if(lvlData && lvlData.status === 'reviewed'){
-        const summary = lvlData.summary || '';
-        const explanation = lvlData.explanation || '';
-        expContent.innerHTML = `<strong>${levelLabels[lv]} 설명</strong><p>${escapeHtml(summary)}</p><p>${escapeHtml(explanation)}</p>`;
-      }else{
-        expContent.innerHTML = `<strong>${levelLabels[lv]} 설명</strong><p style="color:#64748b">해당 수준 설명이 준비 중입니다.</p>`;
+      expToggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+      if(show){
+        renderExplanation(n, expContent, currentLevel);
       }
     });
 
@@ -407,18 +418,6 @@ function initA11y(){
       ct.setAttribute('aria-pressed', next ? 'true' : 'false');
     });
   }
-  // basic ARIA for level explanation toggle
-  document.addEventListener('click', (e)=>{
-    const toggle = e.target.closest('.explain-toggle');
-    if(toggle){
-      const wrap = toggle.parentElement.querySelector('.level-explanation-wrap');
-      if(wrap){
-        const show = wrap.style.display === 'none';
-        wrap.style.display = show ? 'block' : 'none';
-        toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
-      }
-    }
-  });
 }
 initA11y();
 loadData();
